@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as gr
+from plotly.subplots import make_subplots
 from vnstock import stock_historical_data
 from datetime import datetime, timedelta
 import google.generativeai as genai 
@@ -30,7 +31,15 @@ if 'chat_history' not in st.session_state:
 with st.sidebar:
     st.title("⚙️ Điều Khiển")
     st.markdown("---")
+    
     new_ticker = st.text_input("Nhập mã Cổ phiếu:", value=st.session_state['global_ticker']).upper()
+    
+    # KÍCH HOẠT KHUNG CHỌN THỜI GIAN
+    time_range = st.selectbox("Khoảng thời gian xem:", ["1 Tháng", "3 Tháng", "6 Tháng", "1 Năm"], index=1)
+    
+    # Chuyển đổi lựa chọn thành số ngày
+    days_map = {"1 Tháng": 30, "3 Tháng": 90, "6 Tháng": 180, "1 Năm": 365}
+    st.session_state['time_delta'] = days_map[time_range]
     
     if new_ticker != st.session_state['global_ticker']:
         st.session_state['global_ticker'] = new_ticker
@@ -41,36 +50,65 @@ with st.sidebar:
     
     st.info("💡 Mẹo: Hãy ghé thăm các trang 'Chỉ báo', 'Dòng tiền' ở menu bên trái để nạp dữ liệu cho AI.")
 
-# 4. HÀM VẼ BIỂU ĐỒ NẾN (ĐÃ FIX LỖI VNSTOCK)
-def plot_chart(symbol):
+# 4. HÀM VẼ BIỂU ĐỒ CHUẨN TRADINGVIEW
+def plot_chart(symbol, delta_days):
     end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=delta_days)).strftime('%Y-%m-%d')
+    
     try:
-        # Sử dụng tham số có tên để tránh lỗi định dạng ngày tháng
         df = stock_historical_data(
-            symbol=symbol, 
-            start_date=start_date, 
-            end_date=end_date, 
-            resolution="1D", 
-            type="stock"
+            symbol=symbol, start_date=start_date, end_date=end_date, resolution="1D", type="stock"
         )
         
-        fig = gr.Figure(data=[gr.Candlestick(
-            x=df['time'], 
-            open=df['open'], 
-            high=df['high'], 
-            low=df['low'], 
-            close=df['close'], 
-            name='Giá nến'
-        )])
+        # Chia 2 khung: Khung trên vẽ Nến (chiếm 75%), khung dưới vẽ Volume (chiếm 25%)
+        fig = make_subplots(
+            rows=2, cols=1, shared_xaxes=True, 
+            vertical_spacing=0.03, 
+            row_heights=[0.75, 0.25]
+        )
         
+        # 1. Vẽ nến Nhật (Màu chuẩn TradingView)
+        fig.add_trace(gr.Candlestick(
+            x=df['time'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], 
+            name='Giá',
+            increasing_line_color='#26a69a', increasing_fillcolor='#26a69a', # Màu xanh TV
+            decreasing_line_color='#ef5350', decreasing_fillcolor='#ef5350'  # Màu đỏ TV
+        ), row=1, col=1)
+        
+        # 2. Vẽ Volume
+        # Màu volume đi theo màu nến (giá tăng volume xanh, giá giảm volume đỏ)
+        colors = ['#26a69a' if row['close'] >= row['open'] else '#ef5350' for index, row in df.iterrows()]
+        fig.add_trace(gr.Bar(
+            x=df['time'], y=df['volume'], name='Khối lượng', marker_color=colors, opacity=0.8
+        ), row=2, col=1)
+        
+        # 3. Tinh chỉnh giao diện giống TradingView Dark Mode
         fig.update_layout(
-            title=f"Biến động giá {symbol} (60 phiên gần nhất)",
-            yaxis_title="Giá (VND)",
+            title=f"<b>{symbol}</b> - Cập nhật dữ liệu {time_range} gần nhất",
+            title_font=dict(size=18, color='white'),
             template="plotly_dark",
-            height=550,
-            xaxis_rangeslider_visible=False
+            paper_bgcolor='#131722', # Nền ngoài TV
+            plot_bgcolor='#131722',  # Nền trong TV
+            height=600,
+            margin=dict(l=10, r=10, b=10, t=40),
+            showlegend=False,
+            xaxis_rangeslider_visible=False # Tắt cái thanh cuộn ngang xấu xí
         )
+        
+        # 4. Loại bỏ khoảng trống Thứ 7, CN và làm mờ đường lưới
+        fig.update_xaxes(
+            rangebreaks=[dict(bounds=["sat", "mon"])], # Cắt bỏ cuối tuần
+            showgrid=True, gridwidth=1, gridcolor='#2B2B43', # Lưới TV
+            row=1, col=1
+        )
+        fig.update_xaxes(
+            rangebreaks=[dict(bounds=["sat", "mon"])], 
+            showgrid=True, gridwidth=1, gridcolor='#2B2B43',
+            row=2, col=1
+        )
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#2B2B43', row=1, col=1)
+        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='#2B2B43', row=2, col=1)
+        
         return fig
     except Exception as e:
         st.error(f"Lỗi khi vẽ biểu đồ: {e}")
@@ -79,14 +117,14 @@ def plot_chart(symbol):
 # 5. GIAO DIỆN CHÍNH (MAIN DASHBOARD)
 st.title(f"🚀 Quant Trading Hub: {st.session_state['global_ticker']}")
 
-col1, col2 = st.columns([6, 4])
+col1, col2 = st.columns([6.5, 3.5]) # Chỉnh lại tỷ lệ cho biểu đồ rộng hơn một chút
 
 with col1:
-    st.subheader("📈 Biểu đồ kỹ thuật")
     with st.spinner("Đang kết nối dữ liệu sàn giao dịch..."):
-        fig = plot_chart(st.session_state['global_ticker'])
+        fig = plot_chart(st.session_state['global_ticker'], st.session_state['time_delta'])
         if fig:
-            st.plotly_chart(fig, use_container_width=True)
+            # Gắn biểu đồ vào giao diện, bỏ đi các viền mặc định
+            st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
 with col2:
     st.subheader("🤖 Trợ lý AI Phân Tích")
