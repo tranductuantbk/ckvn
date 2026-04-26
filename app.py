@@ -1,78 +1,97 @@
 import streamlit as st
+import pandas as pd
+import plotly.graph_objects as gr
+from vnstock import stock_historical_data
+from datetime import datetime, timedelta
+import google.generativeai as genai # Thư viện AI của Google
 
-# 1. CẤU HÌNH TRANG (Phải luôn nằm đầu tiên)
-st.set_page_config(
-    page_title="Quant Trading Hub",
-    page_icon="📈",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+# 1. CẤU HÌNH TRANG & GOOGLE AI
+st.set_page_config(page_title="Quant Trading Hub", page_icon="📈", layout="wide")
 
-# 2. KHỞI TẠO BỘ NHỚ DÙNG CHUNG (Session State)
-# Điều này cực kỳ quan trọng để AI đọc được data từ các trang khác
+# LƯU Ý: Anh cần lấy API Key tại https://aistudio.google.com/
+# Tạm thời em để chỗ trống để anh điền vào sau
+GOOGLE_API_KEY = "DIEN_API_KEY_CUA_ANH_VAO_DAY" 
+if GOOGLE_API_KEY != "DIEN_API_KEY_CUA_ANH_VAO_DAY":
+    genai.configure(api_key=GOOGLE_API_KEY)
+
+# 2. KHỞI TẠO SESSION STATE
 if 'global_ticker' not in st.session_state:
-    st.session_state['global_ticker'] = 'SSI' # Mặc định
-
+    st.session_state['global_ticker'] = 'SSI'
 if 'ai_context' not in st.session_state:
-    st.session_state['ai_context'] = {
-        'chi_bao': '',
-        'dong_tien': '',
-        'tin_tuc': ''
-    }
-
+    st.session_state['ai_context'] = {'chi_bao': '', 'dong_tien': '', 'tin_tuc': ''}
 if 'chat_history' not in st.session_state:
     st.session_state['chat_history'] = []
 
-# 3. THANH ĐIỀU HƯỚNG BÊN TRÁI (Sidebar - Áp dụng toàn cục)
+# 3. SIDEBAR
 with st.sidebar:
-    st.title("⚙️ Bảng Điều Khiển")
-    st.markdown("---")
-    
-    # Input mã chứng khoán. Khi đổi ở đây, toàn bộ các trang con sẽ cập nhật theo
-    new_ticker = st.text_input("Nhập mã Cổ phiếu (VD: SSI, HPG):", value=st.session_state['global_ticker']).upper()
+    st.title("⚙️ Điều Khiển")
+    new_ticker = st.text_input("Mã Cổ phiếu:", value=st.session_state['global_ticker']).upper()
     if new_ticker != st.session_state['global_ticker']:
         st.session_state['global_ticker'] = new_ticker
-        # Reset bối cảnh AI khi đổi mã
         st.session_state['ai_context'] = {k: '' for k in st.session_state['ai_context']}
         st.rerun()
+    
+    st.info("💡 Mẹo: Hãy ghé thăm các trang 'Chỉ báo', 'Dòng tiền' và 'Tin tức' ở menu bên trái để AI có đủ dữ liệu phân tích mã này.")
 
-    st.selectbox("Khung thời gian (Sắp ra mắt):", ['1D', '1W', '1M', '1m', '5m'], index=0, disabled=True)
+# 4. HÀM VẼ BIỂU ĐỒ NẾN
+def plot_chart(symbol):
+    end_date = datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=60)).strftime('%Y-%m-%d')
+    df = stock_historical_data(symbol, "VD", start_date, end_date, "1D", "stock")
+    
+    fig = gr.Figure(data=[gr.Candlestick(
+        x=df['time'], open=df['open'], high=df['high'], low=df['low'], close=df['close'], name='Nến Nhật'
+    )])
+    fig.update_layout(title=f"Diễn biến giá {symbol}", yaxis_title="Giá (VND)", template="plotly_dark", height=500)
+    return fig
 
-# 4. GIAO DIỆN TRANG CHÍNH (Main Dashboard)
-st.title(f"📊 Phân Tích Tổng Quan: {st.session_state['global_ticker']}")
-st.markdown("Hệ thống tổng hợp dữ liệu từ các module và AI đánh giá.")
+# 5. GIAO DIỆN CHÍNH
+st.title(f"🚀 Quant Trading Hub: {st.session_state['global_ticker']}")
 
-# Chia đôi màn hình: Biểu đồ (Trái) & Trợ lý AI (Phải)
 col1, col2 = st.columns([6, 4])
 
 with col1:
-    st.subheader("Biểu đồ Kỹ thuật")
-    st.info("Khu vực này sẽ nhúng biểu đồ Plotly tĩnh hoặc Lightweight-charts ở các bước sau.")
-    # Placeholder cho biểu đồ
-    st.empty() 
+    st.subheader("📈 Biểu đồ kỹ thuật")
+    with st.spinner("Đang tải biểu đồ..."):
+        fig = plot_chart(st.session_state['global_ticker'])
+        st.plotly_chart(fig, use_container_width=True)
 
 with col2:
-    st.subheader("🤖 Quant AI Agent")
-    st.markdown("*AI đang đọc dữ liệu từ các trang con...*")
+    st.subheader("🤖 Trợ lý AI Phân Tích")
     
-    # Hiển thị trạng thái dữ liệu đã thu thập được
-    with st.expander("🔍 Xem dữ liệu AI đang nắm giữ"):
-        st.json(st.session_state['ai_context'])
+    # Kiểm tra xem đã có đủ dữ liệu chưa
+    context_data = st.session_state['ai_context']
+    is_ready = all(v != '' for v in context_data.values())
     
-    # Giao diện Chat
-    st.markdown("---")
+    if not is_ready:
+        st.warning("AI đang thiếu dữ liệu. Anh hãy nhấn vào các trang con bên trái để hệ thống quét dữ liệu trước nhé!")
+    
+    # Nút bấm để AI tổng hợp báo cáo
+    if st.button("🌟 Lập báo cáo phân tích chi tiết", disabled=not is_ready):
+        full_prompt = f"""
+        Bạn là một chuyên gia phân tích chứng khoán Việt Nam cao cấp. 
+        Dựa trên dữ liệu sau đây về mã {st.session_state['global_ticker']}:
+        
+        {context_data['chi_bao']}
+        {context_data['dong_tien']}
+        {context_data['tin_tuc']}
+        
+        Hãy đưa ra nhận định:
+        1. Xu hướng ngắn hạn là gì?
+        2. Điểm tích cực và tiêu cực hiện tại.
+        3. Lời khuyên Hành động (Mua/Bán/Theo dõi) và tại sao?
+        Hãy trả lời bằng tiếng Việt, phong cách chuyên nghiệp, quyết đoán.
+        """
+        
+        if GOOGLE_API_KEY == "DIEN_API_KEY_CUA_ANH_VAO_DAY":
+            st.error("Anh chưa điền API Key của Gemini vào code!")
+        else:
+            with st.spinner("AI đang 'đọc' dữ liệu và suy luận..."):
+                model = genai.GenerativeModel('gemini-pro')
+                response = model.generate_content(full_prompt)
+                st.session_state['chat_history'].append({"role": "assistant", "content": response.text})
+
+    # Hiển thị hội thoại
     for message in st.session_state['chat_history']:
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
-
-    if prompt := st.chat_input("Hỏi AI về mã này..."):
-        # Lưu câu hỏi
-        st.session_state['chat_history'].append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
-            
-        # Giả lập AI trả lời (Sẽ tích hợp API thật sau)
-        with st.chat_message("assistant"):
-            response = f"Dựa trên bối cảnh hệ thống thu thập được, đây là phân tích về {st.session_state['global_ticker']}..."
-            st.markdown(response)
-            st.session_state['chat_history'].append({"role": "assistant", "content": response})
