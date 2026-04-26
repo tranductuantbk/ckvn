@@ -15,36 +15,34 @@ ticker = st.session_state['global_ticker']
 st.title(f"🦈 Theo Dấu Dòng Tiền Lớn (Smart Money): {ticker}")
 st.markdown("Phân tích áp lực Mua/Bán chủ động và sự dịch chuyển của dòng tiền qua chỉ báo OBV (On-Balance Volume).")
 
-# 2. TẢI DỮ LIỆU
+# 2. TẢI DỮ LIỆU (Đã đổi tên hàm thành v2 để xóa cache cũ, và in ra lỗi thật)
 @st.cache_data(ttl=900)
-def get_money_flow_data(symbol):
+def fetch_money_flow_data_v2(symbol):
     end_date = datetime.now().strftime('%Y-%m-%d')
-    # Lấy 3 tháng để nhìn rõ xu hướng gom/xả
     start_date = (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
     try:
-        df = stock_historical_data(symbol, "VD", start_date, end_date, "1D", "stock")
-        return df
+        df = stock_historical_data(symbol=symbol, start_date=start_date, end_date=end_date, resolution="1D", type="stock")
+        return df, None
     except Exception as e:
-        return None
+        return None, str(e)
 
 with st.spinner(f"Đang dò tìm dấu vết dòng tiền cho {ticker}..."):
-    df = get_money_flow_data(ticker)
+    df, error_msg = fetch_money_flow_data_v2(ticker)
 
 if df is None or df.empty:
     st.error("Không thể tải dữ liệu. Vui lòng kiểm tra lại kết nối.")
+    if error_msg:
+        st.code(f"Mã lỗi chi tiết:\n{error_msg}")
     st.stop()
 
 # 3. TÍNH TOÁN DÒNG TIỀN (Chỉ báo OBV)
-# Nếu giá đóng cửa > phiên trước -> Cộng Volume. Nhỏ hơn -> Trừ Volume. Bằng -> 0.
 df['Price_Diff'] = df['close'].diff()
 df['Direction'] = np.where(df['Price_Diff'] > 0, 1, np.where(df['Price_Diff'] < 0, -1, 0))
 df['OBV'] = (df['Direction'] * df['volume']).cumsum()
 
-# Đánh giá xu hướng dòng tiền trong 5 phiên gần nhất (1 tuần giao dịch)
 recent_obv_trend = df['OBV'].iloc[-1] - df['OBV'].iloc[-5]
 price_trend = df['close'].iloc[-1] - df['close'].iloc[-5]
 
-# Logic xác định trạng thái Smart Money
 if recent_obv_trend > 0 and price_trend > 0:
     trend_status = "Dòng tiền VÀO mạnh (Đồng thuận tăng)"
 elif recent_obv_trend > 0 and price_trend <= 0:
@@ -69,7 +67,6 @@ st.markdown("---")
 st.subheader("2. Biểu đồ Tích lũy OBV (3 tháng)")
 st.info("💡 Mẹo: Nhìn vào biểu đồ này. Nếu giá cổ phiếu đi ngang nhưng đường OBV dốc lên, tay to đang gom hàng chuẩn bị đánh lên.")
 
-# Đưa cột time làm index để Streamlit vẽ biểu đồ mượt hơn
 chart_data = df.set_index('time')[['OBV']]
 st.line_chart(chart_data)
 
