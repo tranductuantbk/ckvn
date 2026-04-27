@@ -3,3 +3,4 @@ pandas>=2.0.0
 vnstock==0.2.8
 plotly>=5.18.0
 google-generativeai>=0.4.0
+beautifulsoup4>=4.12.0
